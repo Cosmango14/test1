@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>병아리 파티클 효과</title>
+<style>
+:root{--bg:#000;--panel:rgba(20,20,22,.72);--text:#e8e6e3;--dim:#9a9894;--accent:#ff9a3c;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#000;--panel:rgba(20,20,22,.72);--text:#e8e6e3;--dim:#9a9894}}
+:root[data-theme="dark"]{--bg:#000;--panel:rgba(20,20,22,.72);--text:#e8e6e3;--dim:#9a9894}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI","Malgun Gothic",sans-serif;overflow:hidden}
+canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+#ui{position:absolute;left:12px;line-height:1.2;bottom:calc(12px + env(safe-area-inset-bottom,0px));width:min(300px,calc(100% - 24px));background:var(--panel);backdrop-filter:blur(8px);border-radius:12px;padding:12px 14px;font-size:13px}
+#ui h1{font-size:14px;margin:0 0 8px;font-weight:600}
+#ui label{display:grid;grid-template-columns:78px 1fr 40px;align-items:center;gap:8px;margin:4px 0;color:var(--dim)}
+#ui output{text-align:right;font-variant-numeric:tabular-nums}
+#ui input[type=range]{width:100%;accent-color:var(--accent)}
+.row{display:flex;gap:12px;margin-top:6px;flex-wrap:wrap}
+#ui .row label{display:flex;grid-template-columns:none;gap:5px;margin:0;color:var(--text);white-space:nowrap}
+#hint{position:absolute;right:12px;top:calc(12px + env(safe-area-inset-top,0px));color:var(--dim);font-size:12px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">드래그: 회전 · 휠/핀치: 확대</div>
+<div id="ui">
+<h1>머리 · 몸통 파티클 효과</h1>
+<label>머리 퍼짐<input id="spreadH" type="range" min="0" max="1.2" step="0.01" value="0.4"><output></output></label>
+<label>몸통 퍼짐<input id="spreadB" type="range" min="0" max="1.2" step="0.01" value="0.4"><output></output></label>
+<label>주기(초)<input id="period" type="range" min="1.5" max="10" step="0.1" value="4"><output></output></label>
+<label>시차(초)<input id="off" type="range" min="0" max="5" step="0.1" value="2"><output></output></label>
+<label>입자 크기<input id="size" type="range" min="1" max="10" step="0.1" value="3.2"><output></output></label>
+<div class="row">
+<label><input id="onH" type="checkbox" checked>머리 켜기</label>
+<label><input id="onB" type="checkbox" checked>몸통 켜기</label>
+<label><input id="rot" type="checkbox">자동 회전</label>
+</div>
+</div>
+<script src="scene.js"></script>
+<script>
+const META=window.SCENE.meta;
+const B64=window.SCENE.data;
+(function(){
+const cv=document.getElementById('c');
+const gl=cv.getContext('webgl2',{antialias:false});
+if(!gl){document.body.insertAdjacentHTML('beforeend','<p style="padding:20px">WebGL2를 지원하지 않는 브라우저입니다.</p>');return;}
+// ---- 데이터 디코딩
+const raw=atob(B64),n=META.n,bytes=new Uint8Array(raw.length);
+for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+const q=new Uint16Array(bytes.buffer.slice(0,n*6));
+const colU8=bytes.subarray(n*6,n*6+n*3);
+const pos=new Float32Array(n*3),grp=new Float32Array(n),rnd=new Float32Array(n*4);
+const mn=META.mn,mx=META.mx;
+for(let i=0;i<n;i++)for(let a=0;a<3;a++)pos[i*3+a]=mn[a]+q[i*3+a]/65535*(mx[a]-mn[a]);
+const cen=[[0,0,0,0],[0,0,0,0]],ymin=[1e9,1e9],ymax=[-1e9,-1e9];
+for(let i=0;i<n;i++){const g=pos[i*3+1]>META.split?1:0;grp[i]=g;const c=cen[g];
+ c[0]+=pos[i*3];c[1]+=pos[i*3+1];c[2]+=pos[i*3+2];c[3]++;
+ ymin[g]=Math.min(ymin[g],pos[i*3+1]);ymax[g]=Math.max(ymax[g],pos[i*3+1]);}
+cen.forEach(c=>{c[0]/=c[3];c[1]/=c[3];c[2]/=c[3];});
+let seed=12345;const R=()=>{seed=(seed+0x6D2B79F5)|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};
+for(let i=0;i<n;i++){const g=grp[i],c=cen[g];
+ let x=pos[i*3]-c[0],y=pos[i*3+1]-c[1],z=pos[i*3+2]-c[2];
+ const L=Math.hypot(x,y,z)||1;x/=L;y/=L;z/=L;
+ let rx=R()*2-1,ry=R()*2-1,rz=R()*2-1;const rl=Math.hypot(rx,ry,rz)||1;rx/=rl;ry/=rl;rz/=rl;
+ let dx=x*0.9+rx*0.7,dy=y*0.9+ry*0.7,dz=z*0.9+rz*0.7;const dl=Math.hypot(dx,dy,dz)||1;
+ const h=(pos[i*3+1]-ymin[g])/((ymax[g]-ymin[g])||1);
+ rnd[i*4]=dx/dl;rnd[i*4+1]=dy/dl;rnd[i*4+2]=dz/dl;rnd[i*4+3]=h*0.6+R()*0.4;}
+// ---- 셰이더
+const VS=`#version 300 es
+in vec3 aPos;in vec3 aCol;in vec4 aRnd;in float aGrp;
+uniform mat4 uMVP;uniform float uT,uSize,uScale,uPeriod,uOff;uniform vec2 uOn,uSp;
+out vec3 vCol;
+void main(){
+ float t=(uT+aGrp*uOff)/uPeriod;
+ float w=0.5-0.5*cos(6.2831853*t);
+ float on=mix(uOn.x,uOn.y,aGrp);
+ float p=clamp(w*1.7-aRnd.w*0.7,0.,1.);
+ float s=p*p*(3.-2.*p)*on;
+ float sp=mix(uSp.x,uSp.y,aGrp);
+ float mag=0.4+0.6*fract(aRnd.w*7.31+aPos.x*13.1);
+ vec3 off=aRnd.xyz*mag*sp*s;
+ off+=0.02*sp*s*vec3(sin(uT*2.+aPos.y*30.),cos(uT*1.7+aPos.z*30.),sin(uT*2.3+aPos.x*30.));
+ vec4 cp=uMVP*vec4(aPos+off,1.);
+ gl_Position=cp;
+ gl_PointSize=max(1.,uSize*uScale/cp.w*(1.-0.35*s));
+ vCol=aCol*(1.+0.5*s);
+}`;
+const FS=`#version 300 es
+precision mediump float;in vec3 vCol;out vec4 o;
+void main(){vec2 c=gl_PointCoord-.5;if(dot(c,c)>.25)discard;o=vec4(min(vCol,vec3(1.)),1.);}`;
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(o));return o;}
+const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,VS));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(pr);gl.useProgram(pr);
+function buf(data,name,size,type,norm){const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+ const l=gl.getAttribLocation(pr,name);gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,size,type,norm,0,0);}
+buf(pos,'aPos',3,gl.FLOAT,false);buf(colU8,'aCol',3,gl.UNSIGNED_BYTE,true);buf(rnd,'aRnd',4,gl.FLOAT,false);buf(grp,'aGrp',1,gl.FLOAT,false);
+const U={};['uMVP','uT','uSp','uSize','uScale','uPeriod','uOff','uOn'].forEach(k=>U[k]=gl.getUniformLocation(pr,k));
+gl.enable(gl.DEPTH_TEST);
+// ---- 행렬/카메라
+function persp(f,a,n,fa){const t=1/Math.tan(f/2),r=1/(n-fa);return[t/a,0,0,0,0,t,0,0,0,0,(n+fa)*r,-1,0,0,2*n*fa*r,0];}
+function look(e,c,u){let z=[e[0]-c[0],e[1]-c[1],e[2]-c[2]];let l=Math.hypot(...z);z=z.map(v=>v/l);
+ let x=[u[1]*z[2]-u[2]*z[1],u[2]*z[0]-u[0]*z[2],u[0]*z[1]-u[1]*z[0]];l=Math.hypot(...x);x=x.map(v=>v/l);
+ const y=[z[1]*x[2]-z[2]*x[1],z[2]*x[0]-z[0]*x[2],z[0]*x[1]-z[1]*x[0]];
+ return[x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-(x[0]*e[0]+x[1]*e[1]+x[2]*e[2]),-(y[0]*e[0]+y[1]*e[1]+y[2]*e[2]),-(z[0]*e[0]+z[1]*e[1]+z[2]*e[2]),1];}
+function mul(a,b){const o=new Array(16).fill(0);for(let i=0;i<4;i++)for(let j=0;j<4;j++)for(let k=0;k<4;k++)o[j*4+i]+=a[k*4+i]*b[j*4+k];return o;}
+const cam={yaw:-0.7,pitch:0.1,dist:1.9,tgt:[0,-0.02,0]};
+const FOV=Math.PI/4;
+const ptrs=new Map();let pinch=0;
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY]);cv.style.cursor='grabbing';});
+cv.addEventListener('pointerup',e=>{ptrs.delete(e.pointerId);pinch=0;cv.style.cursor='grab';});
+cv.addEventListener('pointercancel',e=>{ptrs.delete(e.pointerId);pinch=0;});
+cv.addEventListener('pointermove',e=>{
+ if(!ptrs.has(e.pointerId))return;const o=ptrs.get(e.pointerId);
+ if(ptrs.size===1){cam.yaw-=(e.clientX-o[0])*0.006;cam.pitch=Math.max(-1.4,Math.min(1.4,cam.pitch+(e.clientY-o[1])*0.006));}
+ ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+ if(ptrs.size===2){const [a,b]=[...ptrs.values()];const dd=Math.hypot(a[0]-b[0],a[1]-b[1]);if(pinch)cam.dist=Math.max(0.5,Math.min(5,cam.dist*pinch/dd));pinch=dd;}
+});
+cv.addEventListener('wheel',e=>{e.preventDefault();cam.dist=Math.max(0.5,Math.min(5,cam.dist*Math.exp(e.deltaY*0.001)));},{passive:false});
+// ---- UI
+const $=id=>document.getElementById(id);
+const fmt={spreadH:v=>(+v).toFixed(2),spreadB:v=>(+v).toFixed(2),period:v=>(+v).toFixed(1),off:v=>(+v).toFixed(1),size:v=>(+v).toFixed(1)};
+['spreadH','spreadB','period','off','size'].forEach(k=>{const el=$(k),o=el.parentNode.querySelector('output');const f=()=>o.textContent=fmt[k](el.value);el.addEventListener('input',f);f();});
+function resize(){const d=Math.min(devicePixelRatio||1,2);cv.width=Math.floor(cv.clientWidth*d);cv.height=Math.floor(cv.clientHeight*d);gl.viewport(0,0,cv.width,cv.height);}
+addEventListener('resize',resize);resize();
+let t0=performance.now(),last=t0,T=0;
+function frame(now){
+ const dt=(now-last)/1000;last=now;T+=dt;
+ if($('rot').checked&&!ptrs.size)cam.yaw+=dt*0.25;
+ const cp=Math.cos(cam.pitch);
+ const eye=[cam.tgt[0]+cam.dist*cp*Math.sin(cam.yaw),cam.tgt[1]+cam.dist*Math.sin(cam.pitch),cam.tgt[2]+cam.dist*cp*Math.cos(cam.yaw)];
+ const mvp=mul(persp(FOV,cv.width/cv.height,0.05,20),look(eye,cam.tgt,[0,1,0]));
+ gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+ gl.uniformMatrix4fv(U.uMVP,false,new Float32Array(mvp));
+ gl.uniform1f(U.uT,T);gl.uniform2f(U.uSp,+$('spreadB').value,+$('spreadH').value);gl.uniform1f(U.uPeriod,+$('period').value);
+ gl.uniform1f(U.uOff,+$('off').value);gl.uniform1f(U.uSize,+$('size').value*0.001);
+ gl.uniform1f(U.uScale,cv.height/(2*Math.tan(FOV/2)));
+ gl.uniform2f(U.uOn,$('onB').checked?1:0,$('onH').checked?1:0);
+ gl.drawArrays(gl.POINTS,0,n);
+ requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
